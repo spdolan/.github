@@ -1,0 +1,5 @@
+# Paths copied from the source repository (spdolan/project-standards) to the same path here.
+# A path ending in / is a directory, replaced as a whole so files removed upstream go too.
+# Edit these files in the source repository; the sync overwrites changes made here.
+.github/pull_request_template.md
+.github/ISSUE_TEMPLATE/

@@ -1,0 +1,89 @@
+name: Sync from project-standards
+
+# Copies the files in sync.txt from spdolan/project-standards' latest release into this
+# repository, so GitHub applies them as account-wide defaults (a PR template and issue forms
+# for every repository without its own). project-standards is the one place to edit them; it
+# doesn't know this repository exists. Weekly, or on demand with a tag, branch or sha.
+#
+# The source is public, so fetching needs no token. The fetched files are only copied
+# (scripts/sync.sh); nothing from the source runs. Commits go straight to main as
+# github-actions[bot] with this repository's GITHUB_TOKEN.
+
+on:
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Tag, branch or sha to sync from (default the latest release)
+        type: string
+        required: false
+
+permissions: {}
+
+concurrency:
+  group: sync
+  cancel-in-progress: false
+
+env:
+  SOURCE: spdolan/project-standards
+
+jobs:
+  sync:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - id: ref
+        name: Resolve the source ref
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REF: ${{ inputs.ref }}
+        run: |
+          set -euo pipefail
+          ref="$REF"
+          if [ -z "$ref" ]; then
+            ref="$(gh api "repos/$SOURCE/releases/latest" --jq .tag_name 2>/dev/null || true)"
+          fi
+          if [ -z "$ref" ]; then
+            echo "::notice::$SOURCE has no release yet; nothing to sync."
+            exit 0
+          fi
+          if ! [[ "$ref" =~ ^[A-Za-z0-9._/-]+$ ]]; then echo "::error::invalid ref: $ref"; exit 1; fi
+          sha="$(gh api "repos/$SOURCE/commits/$ref" --jq .sha)"
+          { echo "ref=$ref"; echo "sha=$sha"; } >> "$GITHUB_OUTPUT"
+          echo "Syncing from $SOURCE $ref ($sha)" | tee -a "$GITHUB_STEP_SUMMARY"
+
+      - name: Fetch and copy
+        if: steps.ref.outputs.sha != ''
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+          SHA: ${{ steps.ref.outputs.sha }}
+        run: |
+          set -euo pipefail
+          src="$RUNNER_TEMP/source"
+          mkdir -p "$src"
+          curl -fsSL "https://codeload.github.com/$SOURCE/tar.gz/$SHA" | tar -xz -C "$src" --strip-components=1
+          SOURCE_REPO="$SOURCE" bash scripts/sync.sh "$src" "$REF (${SHA:0:7})"
+
+      - name: Commit if anything changed
+        if: steps.ref.outputs.sha != ''
+        env:
+          REF: ${{ steps.ref.outputs.ref }}
+          TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          git add -A
+          if git diff --cached --quiet; then
+            echo "Already in sync." | tee -a "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          git diff --cached --stat | tee -a "$GITHUB_STEP_SUMMARY"
+          git -c user.name="github-actions[bot]" -c user.email="41898282+github-actions[bot]@users.noreply.github.com" \
+            commit -q -m "chore: sync templates from $SOURCE $REF"
+          git push "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git" HEAD:main
