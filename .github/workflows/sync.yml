@@ -48,7 +48,8 @@ jobs:
           set -euo pipefail
           ref="$REF"
           if [ -z "$ref" ]; then
-            ref="$(gh api "repos/$SOURCE/releases/latest" --jq .tag_name 2>/dev/null || true)"
+            # gh prints the error body on stdout for a 404, so use its exit status, not its output.
+            ref="$(gh api "repos/$SOURCE/releases/latest" --jq .tag_name 2>/dev/null)" || ref=""
           fi
           if [ -z "$ref" ]; then
             echo "::notice::$SOURCE has no release yet; nothing to sync."
